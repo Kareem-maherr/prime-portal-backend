@@ -27,7 +27,17 @@ app.get('/health', (req, res) => {
 
 // MongoDB Atlas Connection
 const uri = process.env.MONGODB_URI;
-const client = new MongoClient(uri);
+const client = new MongoClient(uri, {
+  ssl: true,
+  tls: true,
+  tlsAllowInvalidCertificates: false,
+  tlsAllowInvalidHostnames: false,
+  retryWrites: true,
+  w: "majority",
+  connectTimeoutMS: 30000,
+  socketTimeoutMS: 30000,
+  serverSelectionTimeoutMS: 30000
+});
 let isConnected = false;
 
 // Connect to MongoDB
@@ -36,9 +46,27 @@ async function connectToMongoDB() {
     await client.connect();
     isConnected = true;
     console.log('Connected to MongoDB Atlas');
+    
+    // Test the connection
+    const database = client.db('primegate');
+    await database.command({ ping: 1 });
+    console.log("MongoDB connection successfully validated");
+    
   } catch (error) {
     isConnected = false;
     console.error('Error connecting to MongoDB:', error);
+    
+    // Log more detailed error information
+    if (error.name === 'MongoServerSelectionError') {
+      console.error('MongoDB Server Selection Error Details:');
+      console.error('- Error Code:', error.code);
+      console.error('- Error Message:', error.message);
+      
+      if (error.cause) {
+        console.error('- Cause:', error.cause.message);
+        console.error('- Cause Code:', error.cause.code);
+      }
+    }
   }
 }
 
@@ -54,7 +82,25 @@ app.get('/api/status', async (req, res) => {
 // API Routes
 app.post('/api/qrcodes', async (req, res) => {
   try {
+    if (!isConnected) {
+      // Try to reconnect if not connected
+      await connectToMongoDB();
+      if (!isConnected) {
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Database connection is not available' 
+        });
+      }
+    }
+    
     const { contactInfo, qrCodeImage } = req.body;
+    
+    if (!contactInfo || !qrCodeImage) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: contactInfo or qrCodeImage'
+      });
+    }
     
     const database = client.db('primegate');
     const qrCodesCollection = database.collection('qrcodes');
@@ -75,7 +121,7 @@ app.post('/api/qrcodes', async (req, res) => {
     console.error('Error saving QR code:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to save QR code' 
+      message: `Failed to save QR code: ${error.message}` 
     });
   }
 });
@@ -83,6 +129,17 @@ app.post('/api/qrcodes', async (req, res) => {
 // Get all QR codes
 app.get('/api/qrcodes', async (req, res) => {
   try {
+    if (!isConnected) {
+      // Try to reconnect if not connected
+      await connectToMongoDB();
+      if (!isConnected) {
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Database connection is not available' 
+        });
+      }
+    }
+    
     const database = client.db('primegate');
     const qrCodesCollection = database.collection('qrcodes');
     
@@ -100,7 +157,7 @@ app.get('/api/qrcodes', async (req, res) => {
     console.error('Error fetching QR codes:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch QR codes' 
+      message: `Failed to fetch QR codes: ${error.message}` 
     });
   }
 });
@@ -108,25 +165,52 @@ app.get('/api/qrcodes', async (req, res) => {
 // Get a specific QR code by ID
 app.get('/api/qrcodes/:id', async (req, res) => {
   try {
+    if (!isConnected) {
+      // Try to reconnect if not connected
+      await connectToMongoDB();
+      if (!isConnected) {
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Database connection is not available' 
+        });
+      }
+    }
+    
     const id = req.params.id;
-    const database = client.db('primegate');
-    const qrCodesCollection = database.collection('qrcodes');
     
-    const qrCode = await qrCodesCollection.findOne({ _id: new ObjectId(id) });
-    
-    if (!qrCode) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'QR code not found' 
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: id'
       });
     }
     
-    res.status(200).json(qrCode);
+    try {
+      const objectId = new ObjectId(id);
+      const database = client.db('primegate');
+      const qrCodesCollection = database.collection('qrcodes');
+      
+      const qrCode = await qrCodesCollection.findOne({ _id: objectId });
+      
+      if (!qrCode) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'QR code not found' 
+        });
+      }
+      
+      res.status(200).json(qrCode);
+    } catch (idError) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid ID format: ${idError.message}`
+      });
+    }
   } catch (error) {
     console.error('Error fetching QR code:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch QR code' 
+      message: `Failed to fetch QR code: ${error.message}` 
     });
   }
 });
