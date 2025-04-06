@@ -7,22 +7,49 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '50mb' })); // Increased limit for base64 images
+
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
 
 // MongoDB Atlas Connection
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri);
+let isConnected = false;
 
 // Connect to MongoDB
 async function connectToMongoDB() {
   try {
     await client.connect();
+    isConnected = true;
     console.log('Connected to MongoDB Atlas');
   } catch (error) {
+    isConnected = false;
     console.error('Error connecting to MongoDB:', error);
   }
 }
+
+// API status endpoint
+app.get('/api/status', async (req, res) => {
+  res.status(200).json({
+    server: 'running',
+    mongodb: isConnected ? 'connected' : 'disconnected',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 // API Routes
 app.post('/api/qrcodes', async (req, res) => {
